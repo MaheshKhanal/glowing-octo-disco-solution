@@ -1,41 +1,55 @@
 "use strict";
 
-// Print all entries, across all of the *async* sources, in chronological order.
-
-// Since Javascript doesnot have a built-in heap, I am using a library implementation of heap. If necessary I can also write a simple min-heap implementation in JS.
-// https://www.npmjs.com/package/heap-js - Popular JS heap library
 const { Heap } = require("heap-js");
 
-// we need the function to be async
+// I have added batch size, this can be adjusted based on requirement. However, the tradeoff is memory usage. Higher batch size can increase throughput but will use significanty more memory
+const BATCH_SIZE = 100;
+
 module.exports = async (logSources, printer) => {
-  // Custom compare function as we need to setup heap based on entry date
   const customComparator = (a, b) => a.entry.date - b.entry.date;
   const heap = new Heap(customComparator);
 
-  // We can use Promise.all instead of multiple promises
-  await Promise.all(
-    logSources.map(async (source, index) => {
-      // using popAsync and we need to wait for response
-      const entry = await source.popAsync();
-      if (entry) {
-        heap.push({ entry, sourceIndex: index });
-      }
-    })
-  );
+  // const to store batches for each source
+  const sourceBuffers = Array(logSources.length).fill(null).map(() => []);
 
-  // Step 2: Continuously process the earliest entry from the min-heap
+  // Helper function to fetch a batch of entries from a source
+  const fetchBatch = async (source, index) => {
+    const batch = [];
+    for (let i = 0; i < BATCH_SIZE; i++) {
+      const entry = await source.popAsync();
+      if (!entry) break;
+      batch.push(entry);
+    }
+    sourceBuffers[index].push(...batch);
+
+    // Push the earliest entry from the batch into the heap
+    if (sourceBuffers[index].length > 0) {
+      heap.push({ entry: sourceBuffers[index][0], sourceIndex: index });
+    }
+  };
+
+  // Initial batch fetch for each source
+  await Promise.all(logSources.map((source, index) => fetchBatch(source, index)));
+
+  // process entries
   while (!heap.isEmpty()) {
-    // get the top entry and print it out
     const { entry, sourceIndex } = heap.pop();
     printer.print(entry);
+   // console.log("SOURCE INDEX : ", sourceIndex)
 
-    // get the next entry
-    const nextEntry = await logSources[sourceIndex].popAsync();
-    if (nextEntry) {
-      heap.push({ entry: nextEntry, sourceIndex });
+    // we have to remove the entry after printing
+    sourceBuffers[sourceIndex].shift();
+
+    // now if the buffer is empty we fetch next batch
+    if (sourceBuffers[sourceIndex].length === 0) {
+      await fetchBatch(logSources[sourceIndex], sourceIndex);
+    }
+
+    // Push the next entry from this source’s buffer if its available
+    if (sourceBuffers[sourceIndex].length > 0) {
+      heap.push({ entry: sourceBuffers[sourceIndex][0], sourceIndex: sourceIndex });
     }
   }
-  // Print out stats
   console.log("ASYNC STATS: ")
   printer.done();
 };

@@ -64,8 +64,8 @@ function runSolutions(sourceCount) {
 // Adjust this input to see how your solutions perform under various loads.
 // 8 sources
 //runSolutions(8);
-//800 sources
-runSolutions(800);
+//100 sources
+runSolutions(100);
 //8000 sources
 //runSolutions(8000);
 
